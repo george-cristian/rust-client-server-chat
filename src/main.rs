@@ -1,4 +1,6 @@
-use tokio::{net::TcpListener, io::{AsyncWriteExt, BufReader, AsyncBufReadExt}};
+use tokio::{net::TcpListener, io::{AsyncWriteExt, BufReader, AsyncBufReadExt}, sync::broadcast};
+
+const NR_OF_CLIENTS:usize = 10;
 
 #[tokio::main]
 async fn main() {
@@ -10,10 +12,17 @@ async fn main() {
         Err(error) => panic!("Unable to create TCP listener on port 8080: {:?}", error)
     };
 
+    let (tx, _rx) = broadcast::channel::<String>(NR_OF_CLIENTS);
+
     loop {
         // Accept any new incoming connections, and get the socket and address
         let (mut socket, _addr) = listener.accept().await.unwrap();
         
+        // Clone tx because otherwise you run into compile error because of move of tx
+        let tx = tx.clone();
+        // Get a new receiver from the channel
+        let mut rx = tx.subscribe();
+
         // Create a new async task for the newly connected client
         // Note the presence of async move which basically says that the code block is an async
         // task so you do not need to write it as a separate function
@@ -25,20 +34,23 @@ async fn main() {
             let mut line = String::new();
 
             loop {
-                let bytes_read = buf_reader.read_line(&mut line).await.unwrap();
-
-                // Check if the client disconnect and if there is no data left
-                if bytes_read == 0 {
-                    break;
+                tokio::select! {
+                    result = buf_reader.read_line(&mut line) => {
+                        if result.unwrap() == 0 {
+                            break;
+                        }
+                        // Broadcast the message
+                        tx.send(line.clone()).unwrap();
+                        // Clear the contents of the string because otherwise it will just append the next message to the existing string
+                        line.clear();
+                    }
+                    result = rx.recv() => {
+                        let msg = result.unwrap();
+                        write_socket.write_all(msg.as_bytes()).await.unwrap();
+                    }
                 }
-
-                write_socket.write_all(line.as_bytes()).await.unwrap();
-
-                // Clear the contents of the string because otherwise it will just append the next message to the existing string
-                line.clear();
             }
         });
-
     }
     
 }
