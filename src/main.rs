@@ -12,11 +12,11 @@ async fn main() {
         Err(error) => panic!("Unable to create TCP listener on port 8080: {:?}", error)
     };
 
-    let (tx, _rx) = broadcast::channel::<String>(NR_OF_CLIENTS);
+    let (tx, _rx) = broadcast::channel(NR_OF_CLIENTS);
 
     loop {
         // Accept any new incoming connections, and get the socket and address
-        let (mut socket, _addr) = listener.accept().await.unwrap();
+        let (mut socket, addr) = listener.accept().await.unwrap();
         
         // Clone tx because otherwise you run into compile error because of move of tx
         let tx = tx.clone();
@@ -40,13 +40,16 @@ async fn main() {
                             break;
                         }
                         // Broadcast the message
-                        tx.send(line.clone()).unwrap();
+                        tx.send((line.clone(), addr)).unwrap();
                         // Clear the contents of the string because otherwise it will just append the next message to the existing string
                         line.clear();
                     }
                     result = rx.recv() => {
-                        let msg = result.unwrap();
-                        write_socket.write_all(msg.as_bytes()).await.unwrap();
+                        let (msg, other_addr) = result.unwrap();
+
+                        if addr != other_addr {
+                            write_socket.write_all(msg.as_bytes()).await.unwrap();
+                        }
                     }
                 }
             }
